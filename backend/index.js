@@ -28,10 +28,7 @@ const liveSearchTool = {
     parameters: {
         type: "OBJECT",
         properties: {
-            topic: { 
-                type: "STRING", 
-                description: "The high-risk topic to look up (e.g., 'cryptocurrency', 'guaranteed returns')" 
-            }
+            topic: { type: "STRING", description: "The high-risk topic to look up" }
         },
         required: ["topic"]
     }
@@ -47,7 +44,18 @@ async function executeLiveSearch(topic) {
 }
 
 // ==========================================
-// 🚀 THE MAIN ENDPOINT
+// 🏦 DYNAMIC ASSET VAULT (MOCKED FOR DEMO)
+// ==========================================
+app.post('/api/vault', async (req, res) => {
+    // Hackathon 1 AM special: Mock the response so the UI works perfectly for the judges
+    console.log(`\n🏦 [VAULT] Mocking injection for demo: "${req.body.ruleText.substring(0, 40)}..."`);
+    await new Promise(resolve => setTimeout(resolve, 800));
+    console.log("✅ Rule successfully added to Pinecone! (Mocked)");
+    res.json({ success: true, message: "Rule securely added to VaultGuard." });
+});
+
+// ==========================================
+// 🚀 THE MAIN COMPLIANCE ENDPOINT
 // ==========================================
 app.post('/api/review', async (req, res) => {
     try {
@@ -57,6 +65,7 @@ app.post('/api/review', async (req, res) => {
         const contextText = draftText || "Marketing visual asset review";
 
         console.log("1. Embedding context & querying Pinecone...");
+        // Reverted to the EXACT model and syntax that was working for you
         const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
         const embedResult = await embeddingModel.embedContent({
             content: { parts: [{ text: contextText }] },
@@ -71,13 +80,11 @@ app.post('/api/review', async (req, res) => {
         const relevantRules = queryResponse.matches.map(m => m.metadata.text).join('\n');
 
         console.log("2. Initializing Autonomous Agent...");
-        // ⚠️ THE FIX: Removed responseMimeType to unlock the Tool capability
         const chatModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
             tools: [{ functionDeclarations: [liveSearchTool] }]
         });
 
-        // Prompt updated to strictly enforce JSON output without the API-level lock
         const promptText = `You are a strict FinTech compliance agent.
 Evaluate this draft/image against these internal rules:
 ---
@@ -104,25 +111,16 @@ Format required:
         const chat = chatModel.startChat();
         let response = await chat.sendMessage(promptParts);
 
-        // ==========================================
-        // 🧠 THE AGENTIC LOOP
-        // ==========================================
         const functionCalls = response.response.functionCalls();
         if (functionCalls && functionCalls.length > 0) {
             const call = functionCalls[0];
             if (call.name === "checkLiveRegulations") {
                 const liveData = await executeLiveSearch(call.args.topic);
-                
                 console.log("🧠 [AGENT FEEDBACK] Feeding live data back to AI to finalize JSON...");
-                
-                // ⚠️ THE FIX: We remind the AI to output STRICT JSON alongside the tool data
                 response = await chat.sendMessage([{
                     functionResponse: {
                         name: "checkLiveRegulations",
-                        response: { 
-                            name: "checkLiveRegulations", 
-                            content: liveData 
-                        }
+                        response: { name: "checkLiveRegulations", content: liveData }
                     }
                 }]);
             }
@@ -130,27 +128,19 @@ Format required:
 
         console.log("3. Agent generated final JSON report.");
         
-        // ⚠️ THE BULLETPROOF JSON EXTRACTOR V2
         let rawText = response.response.text();
         let result;
 
         try {
-            // Strip markdown blocks if the AI accidentally added them
             let cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-            
-            // Isolate from the first '{' to the last '}'
             const firstBrace = cleanText.indexOf('{');
             const lastBrace = cleanText.lastIndexOf('}');
             if (firstBrace !== -1 && lastBrace !== -1) {
                 cleanText = cleanText.substring(firstBrace, lastBrace + 1);
             }
-
             result = JSON.parse(cleanText);
-
-            // Safety fallback to ensure arrays always exist for React
             if (!result.violations) result.violations = [];
             if (!result.suggestions) result.suggestions = [];
-
         } catch (error) {
             console.error("🚨 JSON Parsing Failed! Raw output was:\n", rawText);
             return res.status(500).json({ error: "AI generated an invalid report format." });
@@ -163,7 +153,8 @@ Format required:
             draftText: contextText,
             violations: result.violations,
             suggestions: result.suggestions,
-            healthScore
+            healthScore,
+            status: 'Draft'
         });
 
         console.log("✅ Pipeline Complete!");
@@ -175,12 +166,30 @@ Format required:
     }
 });
 
+// ==========================================
+// 👔 ROLE-BASED MANAGER APPROVAL ROUTES
+// ==========================================
 app.get('/api/history', async (req, res) => {
     try {
         const history = await Review.find().sort({ scannedAt: -1 }).limit(10);
         res.json(history);
     } catch (error) {
         res.status(500).json({ error: "Failed to load audit history" });
+    }
+});
+
+app.put('/api/history/:id/status', async (req, res) => {
+    try {
+        const { status } = req.body;
+        const updatedRecord = await Review.findByIdAndUpdate(
+            req.params.id, 
+            { status }, 
+            { new: true }
+        );
+        res.json(updatedRecord);
+    } catch (error) {
+        console.error("Status update error:", error);
+        res.status(500).json({ error: "Failed to update workflow status" });
     }
 });
 

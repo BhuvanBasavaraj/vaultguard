@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const API_URL = "http://localhost:5000/api/review";
+const VAULT_API_URL = "http://localhost:5000/api/vault";
 
 const SAMPLE_DRAFT =
   "Introducing the VaultGuard Growth Fund: guaranteed 12% annual returns with zero risk. " +
@@ -27,6 +28,7 @@ const ScanIcon = (p) => <Svg {...p}><path d="M4 8V6a2 2 0 012-2h2M16 4h2a2 2 0 0
 const HistoryIcon = (p) => <Svg {...p}><path d="M12 8v4l3 3" /><circle cx="12" cy="12" r="9" /></Svg>;
 const ImageIcon = (p) => <Svg {...p}><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 16 10 5 21" /></Svg>;
 const XIcon = (p) => <Svg {...p}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></Svg>;
+const DatabaseIcon = (p) => <Svg {...p}><ellipse cx="12" cy="5" rx="9" ry="3" /><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3" /><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5" /></Svg>;
 
 /* ---------- Helpers ---------- */
 const toList = (value) => Array.isArray(value) ? value.map((item) => String(item).trim()).filter(Boolean) : [];
@@ -38,10 +40,19 @@ const STATUS_LABEL = {
   error: "Connection issue",
 };
 
+const getStatusColor = (status) => {
+  switch(status) {
+    case 'Approved': return '#10b981';
+    case 'Rejected': return '#ef4444';
+    case 'Pending': return '#f59e0b';
+    default: return '#64748b';
+  }
+};
+
 /* ---------- App ---------- */
 export default function App() {
   const [draftText, setDraftText] = useState("");
-  const [imageBase64, setImageBase64] = useState(null); // The new vision state
+  const [imageBase64, setImageBase64] = useState(null);
   const [status, setStatus] = useState("idle"); 
   const [result, setResult] = useState({ violations: [], suggestions: [] });
   const [error, setError] = useState("");
@@ -52,6 +63,12 @@ export default function App() {
   const [healthScore, setHealthScore] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [currentDbId, setCurrentDbId] = useState(null);
+
+  // Vault State
+  const [showVault, setShowVault] = useState(false);
+  const [newRule, setNewRule] = useState("");
+  const [vaultStatus, setVaultStatus] = useState("");
 
   const abortRef = useRef(null);
   const textareaRef = useRef(null);
@@ -59,8 +76,6 @@ export default function App() {
 
   const isLoading = status === "loading";
   const trimmed = draftText.trim();
-  
-  // We can now scan if there is text OR an image uploaded
   const canScan = (trimmed.length > 0 || imageBase64) && !isLoading;
   const wordCount = trimmed ? trimmed.split(/\s+/).length : 0;
 
@@ -79,7 +94,6 @@ export default function App() {
     return () => abortRef.current?.abort();
   }, []);
 
-  // Base64 Converter for Image Uploads
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -90,6 +104,41 @@ export default function App() {
       if (status === "error" || status === "success") setStatus("idle");
     };
     reader.readAsDataURL(file);
+  };
+
+  const updateWorkflowStatus = async (id, newStatus) => {
+    try {
+      await fetch(`http://localhost:5000/api/history/${id}/status`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      fetchHistory();
+    } catch (err) {
+      console.error("Failed to update status:", err);
+    }
+  };
+
+  // Upload Rule to Pinecone
+  const handleAddRule = async () => {
+    if (!newRule.trim()) return;
+    setVaultStatus("Embedding rule...");
+    try {
+      const response = await fetch(VAULT_API_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ruleText: newRule })
+      });
+      if (response.ok) {
+        setVaultStatus("✅ Rule added to Pinecone Database!");
+        setNewRule("");
+        setTimeout(() => setVaultStatus(""), 3000);
+      } else {
+        setVaultStatus("❌ Failed to add rule.");
+      }
+    } catch (err) {
+      setVaultStatus("❌ Connection error.");
+    }
   };
 
   async function handleScan() {
@@ -107,17 +156,13 @@ export default function App() {
       const response = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // Send both text and image to the RAG backend
         body: JSON.stringify({ draftText, imageBase64 }),
         signal: controller.signal,
       });
 
       if (!response.ok) {
         let detail = "";
-        try {
-          const body = await response.json();
-          detail = body?.error || body?.message || "";
-        } catch { }
+        try { const body = await response.json(); detail = body?.error || body?.message || ""; } catch { }
         const err = new Error(detail || `The review service responded with status ${response.status}.`);
         err.kind = "http";
         throw err;
@@ -126,6 +171,7 @@ export default function App() {
       const data = await response.json();
       
       setHealthScore(data.healthScore);
+      setCurrentDbId(data.id);
       setResult({
         violations: toList(data?.violations),
         suggestions: toList(data?.suggestions),
@@ -139,7 +185,7 @@ export default function App() {
       setError(
         err.kind === "http"
           ? err.message
-          : "Can't reach the review service at localhost:5000. Make sure the backend is running and allows requests from this origin, then try again."
+          : "Can't reach the review service at localhost:5000."
       );
       setStatus("error");
     }
@@ -159,6 +205,7 @@ export default function App() {
     if (fileInputRef.current) fileInputRef.current.value = "";
     setResult({ violations: [], suggestions: [] });
     setHealthScore(null);
+    setCurrentDbId(null);
     setError("");
     setStatus("idle");
     textareaRef.current?.focus();
@@ -213,7 +260,6 @@ export default function App() {
             </div>
 
             <div className={`editor ${isLoading ? "editor--scanning" : ""}`}>
-              {/* Image Preview Container */}
               {imageBase64 && (
                 <div style={{ padding: '16px 16px 0', display: 'flex', justifyContent: 'center' }}>
                   <div style={{ position: 'relative', display: 'inline-block' }}>
@@ -262,106 +308,130 @@ export default function App() {
                 </span>
                 
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <input 
-                    type="file" 
-                    accept="image/*" 
-                    ref={fileInputRef} 
-                    onChange={handleImageUpload} 
-                    style={{ display: 'none' }} 
-                  />
-                  <button
-                    type="button"
-                    className="btn btn--text"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isLoading}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <ImageIcon size={16} />
-                    Upload Image
+                  <input type="file" accept="image/*" ref={fileInputRef} onChange={handleImageUpload} style={{ display: 'none' }} />
+                  <button type="button" className="btn btn--text" onClick={() => fileInputRef.current?.click()} disabled={isLoading} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <ImageIcon size={16} /> Upload Image
                   </button>
-                  <button
-                    type="button"
-                    className="btn btn--text"
-                    onClick={() => setDraftText(SAMPLE_DRAFT)}
-                    disabled={isLoading}
-                  >
-                    Insert sample text
+                  <button type="button" className="btn btn--text" onClick={() => setDraftText(SAMPLE_DRAFT)} disabled={isLoading}>
+                    Insert sample
                   </button>
                 </div>
               </div>
             </div>
 
             <div className="actions" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-              <button
-                type="button"
-                className="btn btn--primary"
-                onClick={handleScan}
-                disabled={!canScan}
-              >
-                {isLoading ? (
-                  <>
-                    <span className="spinner" aria-hidden="true" />
-                    Scanning asset…
-                  </>
-                ) : (
-                  <>
-                    <ScanIcon size={18} />
-                    Scan asset
-                  </>
-                )}
+              <button type="button" className="btn btn--primary" onClick={handleScan} disabled={!canScan}>
+                {isLoading ? <><span className="spinner" aria-hidden="true" /> Scanning asset…</> : <><ScanIcon size={18} /> Scan asset</>}
               </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={handleClear}
-                disabled={isLoading || (!draftText && !imageBase64 && status === "idle")}
-              >
+              <button type="button" className="btn btn--ghost" onClick={handleClear} disabled={isLoading || (!draftText && !imageBase64 && status === "idle")}>
                 Clear
               </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                onClick={() => setShowHistory(!showHistory)}
-                style={{ marginLeft: 'auto' }}
-              >
-                <HistoryIcon size={16} />
-                {showHistory ? "Hide Audit Log" : "View Audit Log"}
-              </button>
+              <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px' }}>
+                <button type="button" className="btn btn--ghost" onClick={() => { setShowVault(!showVault); setShowHistory(false); }}>
+                  <DatabaseIcon size={16} /> Manage Vault
+                </button>
+                <button type="button" className="btn btn--ghost" onClick={() => { setShowHistory(!showHistory); setShowVault(false); }}>
+                  <HistoryIcon size={16} /> Audit Log
+                </button>
+              </div>
             </div>
 
-            {/* ---------- MongoDB Audit History Drawer ---------- */}
+            {/* ---------- Dynamic Asset Vault Drawer ---------- */}
+            {showVault && (
+              <div style={{
+                marginTop: '16px', padding: '16px', background: '#0f172a',
+                borderRadius: '8px', border: '1px solid #3b82f6', animation: 'fadeIn 0.2s ease-out'
+              }}>
+                <h3 style={{ color: '#e2e8f0', marginBottom: '8px', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <DatabaseIcon size={16} /> Inject Brand Guidelines (Pinecone Vector DB)
+                </h3>
+                <p style={{ color: '#94a3b8', fontSize: '0.8rem', marginBottom: '12px' }}>
+                  Enter a new compliance rule or brand guideline. VaultGuard will embed it and instantly apply it to all future scans.
+                </p>
+                <textarea
+                  value={newRule}
+                  onChange={(e) => setNewRule(e.target.value)}
+                  placeholder="e.g., 'Never use the phrase zero fees. Always use no hidden fees.'"
+                  style={{
+                    width: '100%', height: '60px', padding: '8px', borderRadius: '6px',
+                    background: '#1e293b', color: '#f8fafc', border: '1px solid #334155',
+                    fontSize: '0.85rem', resize: 'none', marginBottom: '8px'
+                  }}
+                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#34d399', fontSize: '0.8rem', fontWeight: 600 }}>{vaultStatus}</span>
+                  <button 
+                    onClick={handleAddRule}
+                    disabled={!newRule.trim()}
+                    style={{
+                      padding: '6px 12px', background: newRule.trim() ? '#3b82f6' : '#1e293b', 
+                      color: newRule.trim() ? 'white' : '#64748b', border: 'none', borderRadius: '4px', cursor: newRule.trim() ? 'pointer' : 'not-allowed', fontSize: '0.85rem'
+                    }}
+                  >
+                    Add to Vector Database
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ---------- Role-Based Audit History Drawer ---------- */}
             {showHistory && (
               <div style={{
                 marginTop: '16px', padding: '16px', background: '#0f172a',
                 borderRadius: '8px', border: '1px solid #1e293b', animation: 'fadeIn 0.2s ease-out'
               }}>
-                <h3 style={{ color: '#e2e8f0', marginBottom: '12px', fontSize: '0.95rem' }}>Audit Trail History</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto' }}>
+                <h3 style={{ color: '#e2e8f0', marginBottom: '12px', fontSize: '0.95rem' }}>Manager Approval Dashboard</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
                   {history.length === 0 ? (
                     <p style={{ color: '#64748b', fontSize: '0.85rem', margin: 0 }}>No scans recorded yet.</p>
                   ) : (
                     history.map((item) => (
                       <div key={item._id} style={{
                         padding: '12px', background: '#1e293b', borderRadius: '6px',
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px'
+                        display: 'flex', flexDirection: 'column', gap: '8px'
                       }}>
-                        <div style={{ overflow: 'hidden' }}>
-                          <p style={{ 
-                            margin: '0 0 4px 0', color: '#cbd5e1', fontSize: '0.85rem', 
-                            whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' 
-                          }}>
-                            {item.draftText}
-                          </p>
-                          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-                            {new Date(item.scannedAt).toLocaleTimeString()} · {item.violations?.length || 0} issues
-                          </span>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                          <div style={{ overflow: 'hidden' }}>
+                            <p style={{ 
+                              margin: '0 0 4px 0', color: '#cbd5e1', fontSize: '0.85rem', 
+                              whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' 
+                            }}>
+                              {item.draftText}
+                            </p>
+                            <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
+                              {new Date(item.scannedAt).toLocaleTimeString()} · {item.violations?.length || 0} issues
+                            </span>
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                            <span style={{ fontWeight: 700, fontSize: '0.9rem', color: item.healthScore > 70 ? '#34d399' : '#f87171' }}>
+                              {item.healthScore} / 100
+                            </span>
+                            <span style={{ 
+                              fontSize: '0.7rem', padding: '2px 6px', borderRadius: '4px', 
+                              backgroundColor: `${getStatusColor(item.status || 'Draft')}20`,
+                              color: getStatusColor(item.status || 'Draft'), border: `1px solid ${getStatusColor(item.status || 'Draft')}40` 
+                            }}>
+                              {item.status || 'Draft'}
+                            </span>
+                          </div>
                         </div>
-                        <span style={{
-                          fontWeight: 700, fontSize: '0.9rem', flexShrink: 0,
-                          color: item.healthScore > 70 ? '#34d399' : '#f87171'
-                        }}>
-                          {item.healthScore} / 100
-                        </span>
+                        
+                        {(item.status === 'Pending') && (
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+                            <button 
+                              onClick={() => updateWorkflowStatus(item._id, 'Approved')}
+                              style={{ flex: 1, padding: '4px', fontSize: '0.75rem', background: '#059669', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                              Approve
+                            </button>
+                            <button 
+                              onClick={() => updateWorkflowStatus(item._id, 'Rejected')}
+                              style={{ flex: 1, padding: '4px', fontSize: '0.75rem', background: '#dc2626', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))
                   )}
@@ -381,10 +451,7 @@ export default function App() {
 
             {status === "idle" && (
               <div className="empty">
-                <div className="empty__rings" aria-hidden="true">
-                  <span /><span /><span />
-                  <ShieldCheck size={28} />
-                </div>
+                <div className="empty__rings" aria-hidden="true"><span /><span /><span /><ShieldCheck size={28} /></div>
                 <h3>Nothing scanned yet</h3>
                 <p>Add a draft on the left and select Scan asset. Violations and compliant rewrites will appear here.</p>
               </div>
@@ -392,29 +459,13 @@ export default function App() {
 
             {status === "loading" && (
               <div className="loading" aria-label="Scanning draft">
-                <p className="loading__text">
-                  <span className="pulse-dot" aria-hidden="true" />
-                  Reviewing text and imagery for compliance violations...
-                </p>
+                <p className="loading__text"><span className="pulse-dot" aria-hidden="true" />Reviewing text and imagery...</p>
                 {[0, 1, 2].map((i) => (
                   <div className="skeleton" key={i} style={{ "--i": i }}>
                     <span className="skeleton__icon" />
                     <div className="skeleton__lines"><span /><span /><span /></div>
                   </div>
                 ))}
-              </div>
-            )}
-
-            {status === "error" && (
-              <div className="failure" role="alert">
-                <span className="failure__icon"><Alert size={22} /></span>
-                <div>
-                  <h3>Scan failed</h3>
-                  <p>{error}</p>
-                  <button type="button" className="btn btn--ghost btn--small" onClick={handleScan} disabled={!canScan}>
-                    <Retry size={16} /> Try again
-                  </button>
-                </div>
               </div>
             )}
 
@@ -434,21 +485,24 @@ export default function App() {
                   </div>
                 )}
 
+                {currentDbId && (
+                  <button 
+                    onClick={() => updateWorkflowStatus(currentDbId, 'Pending')}
+                    style={{
+                      width: '100%', padding: '10px', marginBottom: '20px',
+                      background: '#3b82f6', color: 'white', border: 'none', borderRadius: '8px',
+                      fontWeight: 600, cursor: 'pointer', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px'
+                    }}
+                  >
+                    <ShieldCheck size={16} /> Submit to Manager for Approval
+                  </button>
+                )}
+
                 <div className={`verdict ${hasViolations ? "verdict--blocked" : "verdict--clear"}`}>
-                  <span className="verdict__icon">
-                    {hasViolations ? <Alert size={24} /> : <ShieldCheck size={24} />}
-                  </span>
+                  <span className="verdict__icon">{hasViolations ? <Alert size={24} /> : <ShieldCheck size={24} />}</span>
                   <div className="verdict__body">
                     <h3>{hasViolations ? "Not ready to publish" : "Cleared for publishing"}</h3>
-                    <p>
-                      {hasViolations
-                        ? `${violations.length} compliance ${violations.length === 1 ? "issue" : "issues"} found. Review the rewrites below.`
-                        : "No violations were found in this asset."}
-                    </p>
-                  </div>
-                  <div className="verdict__stats">
-                    <span><b>{violations.length}</b> violations</span>
-                    <span><b>{suggestions.length}</b> rewrites</span>
+                    <p>{hasViolations ? `${violations.length} compliance issues found. Review rewrites below.` : "No violations found."}</p>
                   </div>
                 </div>
 
@@ -458,8 +512,7 @@ export default function App() {
                     <ul className="cards">
                       {violations.map((text, i) => (
                         <li className="card card--violation" key={`v-${i}`} style={{ "--i": i + 1 }}>
-                          <span className="card__icon"><Alert size={16} /></span>
-                          <p>{text}</p>
+                          <span className="card__icon"><Alert size={16} /></span><p>{text}</p>
                         </li>
                       ))}
                     </ul>

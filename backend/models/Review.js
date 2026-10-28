@@ -5,6 +5,8 @@ const reviewSchema = new mongoose.Schema({
     violations: { type: [String], default: [] },
     suggestions: { type: [String], default: [] },
     healthScore: { type: Number, required: true },
+    // THE NEW ROLE-BASED WORKFLOW FIELD:
+    status: { type: String, enum: ['Draft', 'Pending', 'Approved', 'Rejected'], default: 'Draft' },
     scannedAt: { type: Date, default: Date.now }
 });
 
