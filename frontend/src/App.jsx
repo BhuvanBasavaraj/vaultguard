@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API_URL = "http://localhost:5000/api/review";
-const VAULT_API_URL = "http://localhost:5000/api/vault";
+const API_URL = "https://vaultguard-nv7z.onrender.com//api/review";
+const VAULT_API_URL = "https://vaultguard-nv7z.onrender.com//api/vault";
 
 const SAMPLE_DRAFT =
   "Introducing the VaultGuard Growth Fund: guaranteed 12% annual returns with zero risk. " +
@@ -64,6 +64,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [currentDbId, setCurrentDbId] = useState(null);
+  const [currentWorkflowStatus, setCurrentWorkflowStatus] = useState("Draft"); // ⚠️ ADDED FOR UI FEEDBACK
 
   // Vault State
   const [showVault, setShowVault] = useState(false);
@@ -114,6 +115,11 @@ export default function App() {
         body: JSON.stringify({ status: newStatus })
       });
       fetchHistory();
+      
+      // ⚠️ FIX: Update the main UI instantly if this is the active document
+      if (id === currentDbId) {
+        setCurrentWorkflowStatus(newStatus);
+      }
     } catch (err) {
       console.error("Failed to update status:", err);
     }
@@ -172,6 +178,8 @@ export default function App() {
       
       setHealthScore(data.healthScore);
       setCurrentDbId(data.id);
+      setCurrentWorkflowStatus(data.status || "Draft"); // ⚠️ Reset to draft for new scan
+      
       setResult({
         violations: toList(data?.violations),
         suggestions: toList(data?.suggestions),
@@ -206,6 +214,7 @@ export default function App() {
     setResult({ violations: [], suggestions: [] });
     setHealthScore(null);
     setCurrentDbId(null);
+    setCurrentWorkflowStatus("Draft");
     setError("");
     setStatus("idle");
     textareaRef.current?.focus();
@@ -485,7 +494,8 @@ export default function App() {
                   </div>
                 )}
 
-                {currentDbId && (
+                {/* ⚠️ DYNAMIC BUTTON STATES */}
+                {currentDbId && currentWorkflowStatus === 'Draft' && (
                   <button 
                     onClick={() => updateWorkflowStatus(currentDbId, 'Pending')}
                     style={{
@@ -495,6 +505,45 @@ export default function App() {
                     }}
                   >
                     <ShieldCheck size={16} /> Submit to Manager for Approval
+                  </button>
+                )}
+
+                {currentDbId && currentWorkflowStatus === 'Pending' && (
+                  <button 
+                    disabled
+                    style={{
+                      width: '100%', padding: '10px', marginBottom: '20px',
+                      background: '#f59e0b', color: 'white', border: 'none', borderRadius: '8px',
+                      fontWeight: 600, cursor: 'not-allowed', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', opacity: 0.9
+                    }}
+                  >
+                    <HistoryIcon size={16} /> Pending Manager Approval
+                  </button>
+                )}
+
+                {currentDbId && currentWorkflowStatus === 'Approved' && (
+                  <button 
+                    disabled
+                    style={{
+                      width: '100%', padding: '10px', marginBottom: '20px',
+                      background: '#10b981', color: 'white', border: 'none', borderRadius: '8px',
+                      fontWeight: 600, cursor: 'default', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px'
+                    }}
+                  >
+                    <Check size={16} /> Approved by Manager
+                  </button>
+                )}
+
+                {currentDbId && currentWorkflowStatus === 'Rejected' && (
+                  <button 
+                    disabled
+                    style={{
+                      width: '100%', padding: '10px', marginBottom: '20px',
+                      background: '#ef4444', color: 'white', border: 'none', borderRadius: '8px',
+                      fontWeight: 600, cursor: 'default', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px'
+                    }}
+                  >
+                    <Alert size={16} /> Rejected by Manager
                   </button>
                 )}
 
