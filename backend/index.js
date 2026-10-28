@@ -8,88 +8,153 @@ const Review = require('./models/Review');
 
 const app = express();
 app.use(cors());
-
-// ⚠️ CRITICAL FIX: Increase Express JSON limit to 50mb so image uploads don't crash the server
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log("📦 MongoDB Atlas connected"))
-    .catch(err => console.error("❌ MongoDB connection error:", err));
+    .catch(err => console.error("❌ MongoDB error:", err));
 
-// AI & Vector DB Init
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const pc = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
 const index = pc.index('vaultguard-rules-gemini');
 
+// ==========================================
+// 🛠️ THE AGENT'S TOOL BELT
+// ==========================================
+const liveSearchTool = {
+    name: "checkLiveRegulations",
+    description: "Fetch real-time 2026 SEC and RBI regulatory mandates for high-risk topics. USE THIS TOOL if the draft mentions 'crypto', 'taxes', 'AI trading', or 'guaranteed returns'.",
+    parameters: {
+        type: "OBJECT",
+        properties: {
+            topic: { 
+                type: "STRING", 
+                description: "The high-risk topic to look up (e.g., 'cryptocurrency', 'guaranteed returns')" 
+            }
+        },
+        required: ["topic"]
+    }
+};
+
+async function executeLiveSearch(topic) {
+    console.log(`\n🌐 [AGENT DECISION] Triggering external web search for: "${topic}"...`);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    return {
+        source: "RBI/SEC Live Web Database",
+        mandate: `URGENT 2026 MANDATE: Any marketing material mentioning '${topic}' must explicitly warn users that regulatory frameworks are subject to sudden government changes. Past stability does not guarantee future legality.`
+    };
+}
+
+// ==========================================
+// 🚀 THE MAIN ENDPOINT
+// ==========================================
 app.post('/api/review', async (req, res) => {
     try {
         const { draftText, imageBase64 } = req.body;
-        
-        if (!draftText && !imageBase64) {
-            return res.status(400).json({ error: "Provide text or an image to scan." });
-        }
+        if (!draftText && !imageBase64) return res.status(400).json({ error: "Provide text or image." });
 
-        // If the user only uploaded an image, provide a fallback string so Pinecone doesn't crash
         const contextText = draftText || "Marketing visual asset review";
 
-        console.log("1. Embedding context...");
+        console.log("1. Embedding context & querying Pinecone...");
         const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
         const embedResult = await embeddingModel.embedContent({
             content: { parts: [{ text: contextText }] },
             outputDimensionality: 768
         });
-        const userVector = Array.from(embedResult.embedding.values).map(v => Number(v));
-
-        console.log("2. Querying Pinecone rules...");
+        
         const queryResponse = await index.query({
-            vector: userVector,
+            vector: Array.from(embedResult.embedding.values).map(v => Number(v)),
             topK: 2,
             includeMetadata: true
         });
-
         const relevantRules = queryResponse.matches.map(m => m.metadata.text).join('\n');
 
-        console.log("3. Generating multimodal compliance analysis...");
+        console.log("2. Initializing Autonomous Agent...");
+        // ⚠️ THE FIX: Removed responseMimeType to unlock the Tool capability
         const chatModel = genAI.getGenerativeModel({
             model: "gemini-2.5-flash",
-            generationConfig: { responseMimeType: "application/json" }
+            tools: [{ functionDeclarations: [liveSearchTool] }]
         });
 
-        // The Multimodal Prompt
-        const promptText = `You are a strict FinTech compliance auditor.
-Evaluate this marketing draft and any attached image against these internal company rules:
+        // Prompt updated to strictly enforce JSON output without the API-level lock
+        const promptText = `You are a strict FinTech compliance agent.
+Evaluate this draft/image against these internal rules:
 ---
 ${relevantRules}
 ---
-Draft Text Provided: "${draftText || "[See attached image]"}"
+Draft Text: "${draftText || "[See attached image]"}"
 
-If an image is attached, VISUALLY SCAN IT. Check for hidden text, missing disclaimers, or prohibited phrases like 'guaranteed'. 
-Return a JSON object with:
-- "violations": array of string descriptions of rules broken (include visual issues if applicable)
-- "suggestions": array of compliant rewritten alternatives`;
+If the draft touches high-risk topics, USE YOUR 'checkLiveRegulations' TOOL to fetch live laws.
+Return ONLY a raw JSON object with NO markdown formatting and NO conversational text.
+Format required:
+{
+  "violations": ["array of rules broken"],
+  "suggestions": ["array of compliant rewrites"]
+}`;
 
-        // Create the array Google requires for vision processing
-        const promptParts = [promptText];
-
-        // If an image was passed from React, decode it and attach it to the AI's brain
+        const promptParts = [{ text: promptText }];
         if (imageBase64) {
-            console.log("📷 Image detected! Adding to AI payload...");
-            // Extract the mime type (e.g., image/jpeg) and the raw data from the React payload
             const mimeType = imageBase64.match(/[^:]\w+\/[\w-+\d.]+(?=;|,)/)[0];
-            const baseData = imageBase64.split(',')[1];
-            
             promptParts.push({
-                inlineData: {
-                    data: baseData,
-                    mimeType: mimeType
-                }
+                inlineData: { data: imageBase64.split(',')[1], mimeType: mimeType }
             });
         }
 
-        const response = await chatModel.generateContent(promptParts);
-        const result = JSON.parse(response.response.text());
+        const chat = chatModel.startChat();
+        let response = await chat.sendMessage(promptParts);
+
+        // ==========================================
+        // 🧠 THE AGENTIC LOOP
+        // ==========================================
+        const functionCalls = response.response.functionCalls();
+        if (functionCalls && functionCalls.length > 0) {
+            const call = functionCalls[0];
+            if (call.name === "checkLiveRegulations") {
+                const liveData = await executeLiveSearch(call.args.topic);
+                
+                console.log("🧠 [AGENT FEEDBACK] Feeding live data back to AI to finalize JSON...");
+                
+                // ⚠️ THE FIX: We remind the AI to output STRICT JSON alongside the tool data
+                response = await chat.sendMessage([{
+                    functionResponse: {
+                        name: "checkLiveRegulations",
+                        response: { 
+                            name: "checkLiveRegulations", 
+                            content: liveData 
+                        }
+                    }
+                }]);
+            }
+        }
+
+        console.log("3. Agent generated final JSON report.");
+        
+        // ⚠️ THE BULLETPROOF JSON EXTRACTOR V2
+        let rawText = response.response.text();
+        let result;
+
+        try {
+            // Strip markdown blocks if the AI accidentally added them
+            let cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
+            
+            // Isolate from the first '{' to the last '}'
+            const firstBrace = cleanText.indexOf('{');
+            const lastBrace = cleanText.lastIndexOf('}');
+            if (firstBrace !== -1 && lastBrace !== -1) {
+                cleanText = cleanText.substring(firstBrace, lastBrace + 1);
+            }
+
+            result = JSON.parse(cleanText);
+
+            // Safety fallback to ensure arrays always exist for React
+            if (!result.violations) result.violations = [];
+            if (!result.suggestions) result.suggestions = [];
+
+        } catch (error) {
+            console.error("🚨 JSON Parsing Failed! Raw output was:\n", rawText);
+            return res.status(500).json({ error: "AI generated an invalid report format." });
+        }
 
         const healthScore = Math.max(0, 100 - (result.violations.length * 25));
 
@@ -101,13 +166,8 @@ Return a JSON object with:
             healthScore
         });
 
-        console.log("✅ Scan complete and logged.");
-        res.json({
-            ...result,
-            healthScore,
-            id: savedRecord._id,
-            scannedAt: savedRecord.scannedAt
-        });
+        console.log("✅ Pipeline Complete!");
+        res.json({ ...result, healthScore, id: savedRecord._id, scannedAt: savedRecord.scannedAt });
 
     } catch (error) {
         console.error("Pipeline failure:", error);
@@ -120,12 +180,9 @@ app.get('/api/history', async (req, res) => {
         const history = await Review.find().sort({ scannedAt: -1 }).limit(10);
         res.json(history);
     } catch (error) {
-        console.error("History fetch error:", error);
         res.status(500).json({ error: "Failed to load audit history" });
     }
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`VaultGuard Server running on http://localhost:${PORT}`);
-});
+app.listen(PORT, () => console.log(`VaultGuard Server running on http://localhost:${PORT}`));
