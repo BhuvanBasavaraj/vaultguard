@@ -1,0 +1,22 @@
+[
+  {
+    "id": "rule-1",
+    "topic": "Guarantees",
+    "text": "Never use the words 'guaranteed', 'risk-free', or 'sure thing'. All investments carry risk. Acceptable alternative: 'historically stable' or 'risk-managed'."
+  },
+  {
+    "id": "rule-2",
+    "topic": "Crypto Assets",
+    "text": "When mentioning cryptocurrency, you must include the disclaimer: 'Crypto assets are highly volatile and unregulated.' Do not imply crypto is a safe haven."
+  },
+  {
+    "id": "rule-3",
+    "topic": "Return Rates",
+    "text": "Never state a specific percentage return as a future promise (e.g., 'Make 20%'). You may only reference past performance with the caveat 'Past performance does not guarantee future results.'"
+  },
+  {
+    "id": "rule-4",
+    "topic": "Urgency",
+    "text": "Do not create false urgency using phrases like 'Act now', 'Time is running out', or 'Don't miss out'. Financial decisions must not be pressured."
+  }
+]
