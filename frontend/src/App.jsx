@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const API_URL = "https://vaultguard-nv7z.onrender.com//api/review";
-const VAULT_API_URL = "https://vaultguard-nv7z.onrender.com//api/vault";
+const BASE_URL = "https://vaultguard-nv7z.onrender.com"; // <-- Put your Render URL here!
+const API_URL = `${BASE_URL}/api/review`;
+const VAULT_API_URL = `${BASE_URL}/api/vault`;
+const HISTORY_API_URL = `${BASE_URL}/api/history`;
 
 const SAMPLE_DRAFT =
   "Introducing the VaultGuard Growth Fund: guaranteed 12% annual returns with zero risk. " +
