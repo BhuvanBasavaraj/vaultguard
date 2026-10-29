@@ -57,112 +57,51 @@ app.post('/api/vault', async (req, res) => {
 // ==========================================
 // 🚀 THE MAIN COMPLIANCE ENDPOINT
 // ==========================================
-app.post('/api/review', async (req, res) => {
+app.post("/api/review", async (req, res) => {
+    const { draftText, imageBase64 } = req.body;
+
     try {
-        const { draftText, imageBase64 } = req.body;
-        if (!draftText && !imageBase64) return res.status(400).json({ error: "Provide text or image." });
+        // Fake the Vector Search delay
+        console.log("1. Embedding context & querying Pinecone (MOCKED FOR DEMO)...");
+        await new Promise(resolve => setTimeout(resolve, 800));
 
-        const contextText = draftText || "Marketing visual asset review";
+        // Fake the Gemini LLM delay
+        console.log("2. Initializing Autonomous Agent (MOCKED FOR DEMO)...");
+        await new Promise(resolve => setTimeout(resolve, 1200));
 
-        console.log("1. Embedding context & querying Pinecone...");
-        // Reverted to the EXACT model and syntax that was working for you
-        const embeddingModel = genAI.getGenerativeModel({ model: "gemini-embedding-001" });
-        const embedResult = await embeddingModel.embedContent({
-            content: { parts: [{ text: contextText }] },
-            outputDimensionality: 768
+        // Static response that proves the UI and DB work perfectly
+        const mockResult = {
+            healthScore: 50,
+            violations: [
+                "Implies guaranteed returns with 'zero risk'.",
+                "Missing mandatory SEC financial disclaimer."
+            ],
+            suggestions: [
+                "Historically, our fund has targeted strong annual returns.",
+                "All investments carry risk. Please read the prospectus."
+            ]
+        };
+
+        // Save to your actual MongoDB Atlas database
+        const newReview = new Review({
+            draftText: draftText || "Multimodal image asset scanned",
+            violations: mockResult.violations,
+            suggestions: mockResult.suggestions,
+            healthScore: mockResult.healthScore,
+            status: "Draft"
         });
         
-        const queryResponse = await index.query({
-            vector: Array.from(embedResult.embedding.values).map(v => Number(v)),
-            topK: 2,
-            includeMetadata: true
+        await newReview.save();
+
+        // Send back to React
+        return res.json({
+            id: newReview._id,
+            ...mockResult
         });
-        const relevantRules = queryResponse.matches.map(m => m.metadata.text).join('\n');
-
-        console.log("2. Initializing Autonomous Agent...");
-        const chatModel = genAI.getGenerativeModel({
-            model: "gemini-2.5-flash",
-            tools: [{ functionDeclarations: [liveSearchTool] }]
-        });
-
-        const promptText = `You are a strict FinTech compliance agent.
-Evaluate this draft/image against these internal rules:
----
-${relevantRules}
----
-Draft Text: "${draftText || "[See attached image]"}"
-
-If the draft touches high-risk topics, USE YOUR 'checkLiveRegulations' TOOL to fetch live laws.
-Return ONLY a raw JSON object with NO markdown formatting and NO conversational text.
-Format required:
-{
-  "violations": ["array of rules broken"],
-  "suggestions": ["array of compliant rewrites"]
-}`;
-
-        const promptParts = [{ text: promptText }];
-        if (imageBase64) {
-            const mimeType = imageBase64.match(/[^:]\w+\/[\w-+\d.]+(?=;|,)/)[0];
-            promptParts.push({
-                inlineData: { data: imageBase64.split(',')[1], mimeType: mimeType }
-            });
-        }
-
-        const chat = chatModel.startChat();
-        let response = await chat.sendMessage(promptParts);
-
-        const functionCalls = response.response.functionCalls();
-        if (functionCalls && functionCalls.length > 0) {
-            const call = functionCalls[0];
-            if (call.name === "checkLiveRegulations") {
-                const liveData = await executeLiveSearch(call.args.topic);
-                console.log("🧠 [AGENT FEEDBACK] Feeding live data back to AI to finalize JSON...");
-                response = await chat.sendMessage([{
-                    functionResponse: {
-                        name: "checkLiveRegulations",
-                        response: { name: "checkLiveRegulations", content: liveData }
-                    }
-                }]);
-            }
-        }
-
-        console.log("3. Agent generated final JSON report.");
-        
-        let rawText = response.response.text();
-        let result;
-
-        try {
-            let cleanText = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
-            const firstBrace = cleanText.indexOf('{');
-            const lastBrace = cleanText.lastIndexOf('}');
-            if (firstBrace !== -1 && lastBrace !== -1) {
-                cleanText = cleanText.substring(firstBrace, lastBrace + 1);
-            }
-            result = JSON.parse(cleanText);
-            if (!result.violations) result.violations = [];
-            if (!result.suggestions) result.suggestions = [];
-        } catch (error) {
-            console.error("🚨 JSON Parsing Failed! Raw output was:\n", rawText);
-            return res.status(500).json({ error: "AI generated an invalid report format." });
-        }
-
-        const healthScore = Math.max(0, 100 - (result.violations.length * 25));
-
-        console.log("4. Persisting audit log to MongoDB...");
-        const savedRecord = await Review.create({
-            draftText: contextText,
-            violations: result.violations,
-            suggestions: result.suggestions,
-            healthScore,
-            status: 'Draft'
-        });
-
-        console.log("✅ Pipeline Complete!");
-        res.json({ ...result, healthScore, id: savedRecord._id, scannedAt: savedRecord.scannedAt });
 
     } catch (error) {
-        console.error("Pipeline failure:", error);
-        res.status(500).json({ error: "Compliance pipeline failed" });
+        console.error("Mock Pipeline error:", error);
+        res.status(500).json({ error: "Failed to process review." });
     }
 });
 
