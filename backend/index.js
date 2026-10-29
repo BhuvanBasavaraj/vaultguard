@@ -81,7 +81,7 @@ app.post('/api/review', async (req, res) => {
 
         console.log("2. Initializing Autonomous Agent...");
         const chatModel = genAI.getGenerativeModel({
-            model: "gemini-1.5-flash",
+            model: "gemini-2.5-flash",
             tools: [{ functionDeclarations: [liveSearchTool] }]
         });
 
