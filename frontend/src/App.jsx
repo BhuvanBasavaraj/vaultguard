@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
-const BASE_URL = "https://vaultguard-nv7z.onrender.com"; // <-- Put your Render URL here!
+const BASE_URL = "https://vaultguard-nv7z.onrender.com"; 
 const API_URL = `${BASE_URL}/api/review`;
 const VAULT_API_URL = `${BASE_URL}/api/vault`;
 const HISTORY_API_URL = `${BASE_URL}/api/history`;
@@ -66,7 +66,7 @@ export default function App() {
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [currentDbId, setCurrentDbId] = useState(null);
-  const [currentWorkflowStatus, setCurrentWorkflowStatus] = useState("Draft"); // ⚠️ ADDED FOR UI FEEDBACK
+  const [currentWorkflowStatus, setCurrentWorkflowStatus] = useState("Draft"); 
 
   // Vault State
   const [showVault, setShowVault] = useState(false);
@@ -84,7 +84,8 @@ export default function App() {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch("http://localhost:5000/api/history");
+      // ⚠️ FIX: Pointed to Render instead of localhost
+      const res = await fetch(HISTORY_API_URL);
       const data = await res.json();
       setHistory(data);
     } catch (err) {
@@ -111,14 +112,14 @@ export default function App() {
 
   const updateWorkflowStatus = async (id, newStatus) => {
     try {
-      await fetch(`http://localhost:5000/api/history/${id}/status`, {
+      // ⚠️ FIX: Pointed to Render instead of localhost
+      await fetch(`${HISTORY_API_URL}/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: newStatus })
       });
       fetchHistory();
       
-      // ⚠️ FIX: Update the main UI instantly if this is the active document
       if (id === currentDbId) {
         setCurrentWorkflowStatus(newStatus);
       }
@@ -127,7 +128,6 @@ export default function App() {
     }
   };
 
-  // Upload Rule to Pinecone
   const handleAddRule = async () => {
     if (!newRule.trim()) return;
     setVaultStatus("Embedding rule...");
@@ -180,7 +180,7 @@ export default function App() {
       
       setHealthScore(data.healthScore);
       setCurrentDbId(data.id);
-      setCurrentWorkflowStatus(data.status || "Draft"); // ⚠️ Reset to draft for new scan
+      setCurrentWorkflowStatus(data.status || "Draft"); 
       
       setResult({
         violations: toList(data?.violations),
@@ -189,7 +189,7 @@ export default function App() {
       setScanMs(performance.now() - startedAt);
       setScanId((id) => id + 1);
       setStatus("success");
-      fetchHistory();
+      fetchHistory(); 
     } catch (err) {
       if (err.name === "AbortError") return;
       setError(
@@ -496,7 +496,6 @@ export default function App() {
                   </div>
                 )}
 
-                {/* ⚠️ DYNAMIC BUTTON STATES */}
                 {currentDbId && currentWorkflowStatus === 'Draft' && (
                   <button 
                     onClick={() => updateWorkflowStatus(currentDbId, 'Pending')}
